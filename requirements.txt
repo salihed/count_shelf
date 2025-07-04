@@ -1,0 +1,22 @@
+# Streamlit framework
+streamlit>=1.28.0
+
+# Google Sheets entegrasyonu
+gspread>=5.12.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
+
+# Veri işleme
+pandas>=1.5.0
+numpy>=1.24.0
+
+# Tarih ve zaman işlemleri (Python built-in, ama versiyon uyumluluğu için)
+python-dateutil>=2.8.0
+
+# Güvenlik (hashlib Python built-in)
+# hashlib - Python standard library
+
+# Opsiyonel: Gelişmiş veri analizi için
+# openpyxl>=3.1.0  # Excel dosyaları için
+# plotly>=5.17.0   # İleri seviye grafikler için
