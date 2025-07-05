@@ -50,14 +50,9 @@ st.markdown("""
         padding: 0.5rem 1rem !important;
         border-radius: 5px !important;
         font-size: 0.9rem !important;
-    .current-address {
-    
-    .main-header {
-        text-align: center;
-        color: #2E86AB;
-        font-size: 2.5rem;
-        margin-bottom: 2rem;
     }
+    
+    .current-address {
         background-color: #E8F4FD;
         padding: 1rem;
         border-radius: 10px;
@@ -65,6 +60,13 @@ st.markdown("""
         margin-bottom: 1rem;
         font-size: 1.2rem;
         color: #1E3A8A;
+    }
+    
+    .main-header {
+        text-align: center;
+        color: #2E86AB;
+        font-size: 2.5rem;
+        margin-bottom: 2rem;
     }
     
     .counter-display {
@@ -131,6 +133,14 @@ st.markdown("""
         font-size: 1.2rem;
         padding: 1rem;
         border-radius: 10px;
+    }
+    
+    .spreadsheet-info {
+        background-color: #F0F9FF;
+        padding: 1rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #2E86AB;
     }
     
     @media (max-width: 768px) {
@@ -222,29 +232,72 @@ def init_google_sheets():
         st.error(f"Google Sheets bağlantısı kurulamadı: {str(e)}")
         return None
 
-@st.cache_data(ttl=60)  # 1 dakika cache
-def load_data(sheet_url):
-    """Google Sheets'ten veri yükler"""
+@st.cache_resource
+def get_spreadsheet():
+    """Spreadsheet'i secrets'tan alır"""
     try:
         client = init_google_sheets()
         if client is None:
-            return None
+            return None, None
         
-        sheet = client.open_by_url(sheet_url).sheet1
+        # Spreadsheet ID'sini secrets'tan al
+        spreadsheet_id = st.secrets["spreadsheet"]["id"]
+        spreadsheet = client.open_by_key(spreadsheet_id)
+        
+        return spreadsheet, spreadsheet_id
+    except Exception as e:
+        st.error(f"Spreadsheet erişim hatası: {str(e)}")
+        return None, None
+
+@st.cache_data(ttl=60)  # 1 dakika cache
+def load_data():
+    """Google Sheets'ten veri yükler"""
+    try:
+        spreadsheet, spreadsheet_id = get_spreadsheet()
+        if spreadsheet is None:
+            return None, None
+        
+        # Ana sayfa (worksheet) al
+        sheet = spreadsheet.sheet1
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         
         # Boş satırları temizle
-        df = df.dropna(subset=['Depo Adresi', 'Taşıma Birimi (TB)'])
+        if not df.empty:
+            df = df.dropna(subset=['Depo Adresi', 'Taşıma Birimi (TB)'])
         
         return df, sheet
     except Exception as e:
         st.error(f"Veri yükleme hatası: {str(e)}")
         return None, None
 
+def ensure_required_columns(sheet):
+    """Gerekli sütunların var olduğundan emin olur"""
+    try:
+        # Başlık satırını al
+        header_row = sheet.row_values(1)
+        
+        # Gerekli sütunları kontrol et ve ekle
+        required_columns = ['Sayım Durumu', 'Sayım Yapan', 'Sayım Tarihi', 'Sayım Başlama Tarihi', 'Sayım Bitiş Tarihi']
+        
+        for col in required_columns:
+            if col not in header_row:
+                # Yeni sütun ekle
+                next_col = len(header_row) + 1
+                sheet.update_cell(1, next_col, col)
+                header_row.append(col)
+        
+        return True
+    except Exception as e:
+        st.error(f"Sütun kontrol hatası: {str(e)}")
+        return False
+
 def update_sayim_durumu(sheet, tb_value, durum, username):
     """Sayım durumunu günceller"""
     try:
+        # Gerekli sütunları kontrol et
+        ensure_required_columns(sheet)
+        
         # Tüm verileri al
         all_values = sheet.get_all_values()
         
@@ -252,16 +305,8 @@ def update_sayim_durumu(sheet, tb_value, durum, username):
         header_row = all_values[0]
         tb_col = header_row.index('Taşıma Birimi (TB)') + 1
         durum_col = header_row.index('Sayım Durumu') + 1
-        
-        # Sayım yapan kullanıcı sütunu var mı kontrol et
-        sayim_yapan_col = None
-        if 'Sayım Yapan' in header_row:
-            sayim_yapan_col = header_row.index('Sayım Yapan') + 1
-        
-        # Sayım tarihi sütunu var mı kontrol et
-        sayim_tarihi_col = None
-        if 'Sayım Tarihi' in header_row:
-            sayim_tarihi_col = header_row.index('Sayım Tarihi') + 1
+        sayim_yapan_col = header_row.index('Sayım Yapan') + 1
+        sayim_tarihi_col = header_row.index('Sayım Tarihi') + 1
         
         # TB'yi bul ve güncelle
         for i, row in enumerate(all_values[1:], start=2):
@@ -270,13 +315,11 @@ def update_sayim_durumu(sheet, tb_value, durum, username):
                 sheet.update_cell(i, durum_col, durum)
                 
                 # Sayım yapan kullanıcıyı güncelle
-                if sayim_yapan_col:
-                    sheet.update_cell(i, sayim_yapan_col, username)
+                sheet.update_cell(i, sayim_yapan_col, username)
                 
                 # Sayım tarihini güncelle
-                if sayim_tarihi_col:
-                    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    sheet.update_cell(i, sayim_tarihi_col, current_time)
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                sheet.update_cell(i, sayim_tarihi_col, current_time)
                 
                 break
         
@@ -285,16 +328,54 @@ def update_sayim_durumu(sheet, tb_value, durum, username):
         st.error(f"Güncelleme hatası: {str(e)}")
         return False
 
+def update_address_sayim_durumu(sheet, address, durum, username):
+    """Adres bazında sayım durumunu günceller"""
+    try:
+        # Gerekli sütunları kontrol et
+        ensure_required_columns(sheet)
+        
+        # Tüm verileri al
+        all_values = sheet.get_all_values()
+        
+        # Sütun indekslerini bul
+        header_row = all_values[0]
+        address_col = header_row.index('Depo Adresi') + 1
+        
+        # Sayım başlama/bitiş tarihi sütunları
+        sayim_baslama_col = header_row.index('Sayım Başlama Tarihi') + 1
+        sayim_bitis_col = header_row.index('Sayım Bitiş Tarihi') + 1
+        
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Adrese ait tüm satırları bul ve güncelle
+        for i, row in enumerate(all_values[1:], start=2):
+            if row[address_col-1] == address:
+                if durum == 'Başladı':
+                    # Sayım başlama tarihini güncelle
+                    sheet.update_cell(i, sayim_baslama_col, current_time)
+                elif durum == 'Tamamlandı':
+                    # Sayım bitiş tarihini güncelle
+                    sheet.update_cell(i, sayim_bitis_col, current_time)
+        
+        return True
+    except Exception as e:
+        st.error(f"Adres durumu güncelleme hatası: {str(e)}")
+        return False
+
 def get_address_tbs(df, address):
     """Bir adrese ait TB'leri döndürür"""
-    address_data = df[df['Depo Adresi'] == address]
-    return address_data
+    if df is not None and not df.empty:
+        address_data = df[df['Depo Adresi'] == address]
+        return address_data
+    return pd.DataFrame()
 
 def count_sayilan_tbs(df, address):
     """Sayılan TB sayısını döndürür"""
     address_data = get_address_tbs(df, address)
-    sayilan_count = len(address_data[address_data['Sayım Durumu'] == 'Sayıldı'])
-    return sayilan_count
+    if not address_data.empty:
+        sayilan_count = len(address_data[address_data['Sayım Durumu'] == 'Sayıldı'])
+        return sayilan_count
+    return 0
 
 # Session state başlatma
 if 'authenticated' not in st.session_state:
@@ -305,8 +386,6 @@ if 'current_address' not in st.session_state:
     st.session_state.current_address = None
 if 'messages' not in st.session_state:
     st.session_state.messages = []
-if 'sheet_url' not in st.session_state:
-    st.session_state.sheet_url = ""
 
 # Kullanıcı doğrulama kontrolü
 if not st.session_state.authenticated:
@@ -325,236 +404,280 @@ with col2:
 # Ana başlık
 st.markdown('<h1 class="main-header">📦 Depo Sayım Programı</h1>', unsafe_allow_html=True)
 
-# Sidebar - Konfigürasyon
+# Spreadsheet bilgisi göster
+try:
+    spreadsheet, spreadsheet_id = get_spreadsheet()
+    if spreadsheet:
+        st.markdown(f'''
+        <div class="spreadsheet-info">
+            <strong>📊 Aktif Spreadsheet:</strong> {spreadsheet.title}<br>
+            <strong>🆔 ID:</strong> {spreadsheet_id}
+        </div>
+        ''', unsafe_allow_html=True)
+except:
+    pass
+
+# Sidebar - Kontrol Paneli
 with st.sidebar:
-    st.header("⚙️ Konfigürasyon")
-    
-    sheet_url = st.text_input(
-        "Google Sheets URL:",
-        value=st.session_state.sheet_url,
-        placeholder="https://docs.google.com/spreadsheets/d/...",
-        help="Sayım verilerinin bulunduğu Google Sheets URL'sini girin"
-    )
-    
-    if sheet_url != st.session_state.sheet_url:
-        st.session_state.sheet_url = sheet_url
-        st.rerun()
-    
-    st.markdown("---")
+    st.header("🎛️ Kontrol Paneli")
     
     if st.button("🔄 Verileri Yenile"):
         st.cache_data.clear()
+        st.cache_resource.clear()
         st.rerun()
     
     if st.button("🗑️ Oturumu Temizle"):
         st.session_state.current_address = None
         st.session_state.messages = []
         st.rerun()
+    
+    st.markdown("---")
+    
+    # Spreadsheet bilgileri
+    st.subheader("📊 Spreadsheet Bilgileri")
+    try:
+        spreadsheet, spreadsheet_id = get_spreadsheet()
+        if spreadsheet:
+            st.write(f"**Başlık:** {spreadsheet.title}")
+            st.write(f"**ID:** {spreadsheet_id}")
+            st.write(f"**Sayfa Sayısı:** {len(spreadsheet.worksheets())}")
+        else:
+            st.error("Spreadsheet'e erişilemiyor!")
+    except Exception as e:
+        st.error(f"Spreadsheet bilgisi alınamadı: {str(e)}")
 
 # Ana uygulama
-if st.session_state.sheet_url:
-    # Verileri yükle
-    data_result = load_data(st.session_state.sheet_url)
+# Verileri yükle
+data_result = load_data()
+
+if data_result[0] is not None:
+    df, sheet = data_result
     
-    if data_result[0] is not None:
-        df, sheet = data_result
+    # Mevcut adres gösterimi
+    if st.session_state.current_address:
+        st.markdown(f'<div class="current-address">📍 Aktif Adres: <strong>{st.session_state.current_address}</strong></div>', 
+                   unsafe_allow_html=True)
         
-        # Mevcut adres gösterimi
-        if st.session_state.current_address:
-            st.markdown(f'<div class="current-address">Bu adres sayılıyor: <strong>{st.session_state.current_address}</strong></div>', 
-                       unsafe_allow_html=True)
-            
-            # Sayaç gösterimi
-            address_tbs = get_address_tbs(df, st.session_state.current_address)
-            total_tbs = len(address_tbs)
-            sayilan_tbs = count_sayilan_tbs(df, st.session_state.current_address)
-            
-            st.markdown(f'''
-            <div class="counter-display">
-                <div class="counter-text">{sayilan_tbs} / {total_tbs}</div>
-                <div>Sayılan TB / Toplam TB</div>
-            </div>
-            ''', unsafe_allow_html=True)
+        # Sayaç gösterimi
+        address_tbs = get_address_tbs(df, st.session_state.current_address)
+        total_tbs = len(address_tbs)
+        sayilan_tbs = count_sayilan_tbs(df, st.session_state.current_address)
         
-        # Giriş bölümü
-        st.markdown('<div class="input-section">', unsafe_allow_html=True)
+        st.markdown(f'''
+        <div class="counter-display">
+            <div class="counter-text">{sayilan_tbs} / {total_tbs}</div>
+            <div>Sayılan TB / Toplam TB</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    
+    # Giriş bölümü
+    st.markdown('<div class="input-section">', unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📍 Adres Okutma")
+        address_input = st.text_input(
+            "Adres Barkodu:",
+            placeholder="Adres barkodunu okutun veya yazın",
+            key="address_input"
+        )
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("📍 Adres Okutma")
-            address_input = st.text_input(
-                "Adres Barkodu:",
-                placeholder="Adres barkodunu okutun veya yazın",
-                key="address_input"
-            )
-            
-            if st.button("🎯 Adres Seç"):
-                if address_input:
-                    # Adresi kontrol et
-                    if address_input in df['Depo Adresi'].values:
-                        st.session_state.current_address = address_input
-                        st.session_state.messages = []
-                        st.rerun()
-                    else:
-                        st.error("Bu adres sistemde bulunamadı!")
-        
-        with col2:
-            st.subheader("📦 TB Okutma")
-            tb_input = st.text_input(
-                "TB Barkodu:",
-                placeholder="TB barkodunu okutun veya yazın",
-                key="tb_input",
-                disabled=st.session_state.current_address is None
-            )
-            
-            if st.button("✅ TB Kaydet", disabled=st.session_state.current_address is None):
-                if tb_input and st.session_state.current_address:
-                    # TB'yi kontrol et
-                    address_tbs = get_address_tbs(df, st.session_state.current_address)
-                    tb_row = address_tbs[address_tbs['Taşıma Birimi (TB)'] == tb_input]
+        if st.button("🎯 Adres Seç"):
+            if address_input:
+                # Adresi kontrol et
+                if address_input in df['Depo Adresi'].values:
+                    # Önceki adresin sayımını tamamla
+                    if st.session_state.current_address:
+                        update_address_sayim_durumu(sheet, st.session_state.current_address, 'Tamamlandı', st.session_state.username)
                     
-                    if not tb_row.empty:
-                        # TB bu adreste var mı?
-                        current_durum = tb_row['Sayım Durumu'].iloc[0]
-                        
-                        if current_durum == 'Sayıldı':
-                            # Daha önce sayılmış
-                            st.session_state.messages.append({
-                                'type': 'warning',
-                                'message': f"Bu TB daha önce sayıldı: {tb_input}"
-                            })
-                        else:
-                            # TB'yi sayıldı olarak işaretle
-                            if update_sayim_durumu(sheet, tb_input, 'Sayıldı', st.session_state.username):
-                                st.session_state.messages.append({
-                                    'type': 'success',
-                                    'message': f"TB başarıyla kaydedildi: {tb_input}"
-                                })
-                                st.cache_data.clear()  # Cache'i temizle
-                                st.rerun()
-                    else:
-                        # TB bu adreste yok
-                        st.session_state.messages.append({
-                            'type': 'error',
-                            'message': f"Bu TB bu adreste bulunamadı: {tb_input}"
-                        })
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Mesajları göster
-        for msg in st.session_state.messages:
-            if msg['type'] == 'success':
-                st.markdown(f'<div class="success-message">✅ {msg["message"]}</div>', unsafe_allow_html=True)
-            elif msg['type'] == 'warning':
-                st.markdown(f'<div class="warning-message">⚠️ {msg["message"]}</div>', unsafe_allow_html=True)
-            elif msg['type'] == 'error':
-                st.markdown(f'<div class="error-message">❌ {msg["message"]}</div>', unsafe_allow_html=True)
-        
-        # Sayımı bitirme butonu
-        if st.session_state.current_address:
-            st.markdown("---")
-            
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                if st.button("🏁 Bu Adresin Sayımını Bitir", type="primary"):
-                    # Sayılmayan TB'leri "Bulunamadı" olarak işaretle
-                    address_tbs = get_address_tbs(df, st.session_state.current_address)
-                    sayilmayan_tbs = address_tbs[address_tbs['Sayım Durumu'].isna() | (address_tbs['Sayım Durumu'] == '')]
-                    
-                    if not sayilmayan_tbs.empty:
-                        for _, row in sayilmayan_tbs.iterrows():
-                            update_sayim_durumu(sheet, row['Taşıma Birimi (TB)'], 'Bulunamadı', st.session_state.username)
-                        
-                        st.warning(f"⚠️ {len(sayilmayan_tbs)} adet TB bulunamadı olarak işaretlendi:")
-                        
-                        # Bulunamayan TB'leri göster
-                        for _, row in sayilmayan_tbs.iterrows():
-                            st.write(f"- **TB:** {row['Taşıma Birimi (TB)']} | **Parti:** {row['Parti']} | **Miktar:** {row['Miktar']}")
-                    else:
-                        st.success("✅ Bu adresteki tüm TB'ler sayıldı!")
-                    
-                    st.cache_data.clear()
-                    st.session_state.current_address = None
+                    # Yeni adresi seç ve sayımı başlat
+                    st.session_state.current_address = address_input
                     st.session_state.messages = []
+                    update_address_sayim_durumu(sheet, address_input, 'Başladı', st.session_state.username)
+                    st.cache_data.clear()
                     st.rerun()
+                else:
+                    st.error("❌ Bu adres sistemde bulunamadı!")
+    
+    with col2:
+        st.subheader("📦 TB Okutma")
+        tb_input = st.text_input(
+            "TB Barkodu:",
+            placeholder="TB barkodunu okutun veya yazın",
+            key="tb_input",
+            disabled=st.session_state.current_address is None
+        )
         
-        # Rapor sekmesi
+        if st.button("✅ TB Kaydet", disabled=st.session_state.current_address is None):
+            if tb_input and st.session_state.current_address:
+                # TB'yi kontrol et
+                address_tbs = get_address_tbs(df, st.session_state.current_address)
+                tb_row = address_tbs[address_tbs['Taşıma Birimi (TB)'] == tb_input]
+                
+                if not tb_row.empty:
+                    # TB bu adreste var mı?
+                    current_durum = tb_row['Sayım Durumu'].iloc[0]
+                    
+                    if current_durum == 'Sayıldı':
+                        # Daha önce sayılmış
+                        st.session_state.messages.append({
+                            'type': 'warning',
+                            'message': f"Bu TB daha önce sayıldı: {tb_input}"
+                        })
+                    else:
+                        # TB'yi sayıldı olarak işaretle
+                        if update_sayim_durumu(sheet, tb_input, 'Sayıldı', st.session_state.username):
+                            st.session_state.messages.append({
+                                'type': 'success',
+                                'message': f"TB başarıyla kaydedildi: {tb_input}"
+                            })
+                            st.cache_data.clear()  # Cache'i temizle
+                            st.rerun()
+                else:
+                    # TB bu adreste yok
+                    st.session_state.messages.append({
+                        'type': 'error',
+                        'message': f"Bu TB bu adreste bulunamadı: {tb_input}"
+                    })
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Mesajları göster
+    for msg in st.session_state.messages:
+        if msg['type'] == 'success':
+            st.markdown(f'<div class="success-message">✅ {msg["message"]}</div>', unsafe_allow_html=True)
+        elif msg['type'] == 'warning':
+            st.markdown(f'<div class="warning-message">⚠️ {msg["message"]}</div>', unsafe_allow_html=True)
+        elif msg['type'] == 'error':
+            st.markdown(f'<div class="error-message">❌ {msg["message"]}</div>', unsafe_allow_html=True)
+    
+    # Sayımı bitirme butonu
+    if st.session_state.current_address:
         st.markdown("---")
-        st.subheader("📊 Sayım Durumu Raporu")
         
-        # Filtreler
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🏁 Bu Adresin Sayımını Bitir", type="primary"):
+                # Sayılmayan TB'leri "Bulunamadı" olarak işaretle
+                address_tbs = get_address_tbs(df, st.session_state.current_address)
+                sayilmayan_tbs = address_tbs[address_tbs['Sayım Durumu'].isna() | (address_tbs['Sayım Durumu'] == '')]
+                
+                if not sayilmayan_tbs.empty:
+                    for _, row in sayilmayan_tbs.iterrows():
+                        update_sayim_durumu(sheet, row['Taşıma Birimi (TB)'], 'Bulunamadı', st.session_state.username)
+                    
+                    st.warning(f"⚠️ {len(sayilmayan_tbs)} adet TB bulunamadı olarak işaretlendi:")
+                    
+                    # Bulunamayan TB'leri göster
+                    for _, row in sayilmayan_tbs.iterrows():
+                        st.write(f"- **TB:** {row['Taşıma Birimi (TB)']} | **Parti:** {row['Parti']} | **Miktar:** {row['Miktar']}")
+                else:
+                    st.success("✅ Bu adresteki tüm TB'ler sayıldı!")
+                
+                # Adres sayımını tamamla
+                update_address_sayim_durumu(sheet, st.session_state.current_address, 'Tamamlandı', st.session_state.username)
+                
+                st.cache_data.clear()
+                st.session_state.current_address = None
+                st.session_state.messages = []
+                st.rerun()
+    
+    # Rapor sekmesi
+    st.markdown("---")
+    st.subheader("📊 Sayım Durumu Raporu")
+    
+    # Filtreler
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_address = st.selectbox(
+            "Adres Seçin:",
+            options=["Tümü"] + list(df['Depo Adresi'].unique()),
+            index=0
+        )
+    
+    with col2:
+        selected_durum = st.selectbox(
+            "Sayım Durumu:",
+            options=["Tümü", "Sayıldı", "Bulunamadı", "Sayılmadı"],
+            index=0
+        )
+    
+    # Filtrelenmiş veri
+    filtered_df = df.copy()
+    
+    if selected_address != "Tümü":
+        filtered_df = filtered_df[filtered_df['Depo Adresi'] == selected_address]
+    
+    if selected_durum == "Sayıldı":
+        filtered_df = filtered_df[filtered_df['Sayım Durumu'] == 'Sayıldı']
+    elif selected_durum == "Bulunamadı":
+        filtered_df = filtered_df[filtered_df['Sayım Durumu'] == 'Bulunamadı']
+    elif selected_durum == "Sayılmadı":
+        filtered_df = filtered_df[filtered_df['Sayım Durumu'].isna() | (filtered_df['Sayım Durumu'] == '')]
+    
+    # Rapor tablosu
+    if not filtered_df.empty:
+        # Görüntülenecek sütunları belirle
+        display_columns = ['Depo Adresi', 'Taşıma Birimi (TB)', 'Parti', 'Miktar', 'Sayım Durumu']
+        
+        # Opsiyonel sütunları ekle
+        optional_columns = ['Sayım Yapan', 'Sayım Tarihi', 'Sayım Başlama Tarihi', 'Sayım Bitiş Tarihi']
+        for col in optional_columns:
+            if col in filtered_df.columns:
+                display_columns.append(col)
+        
+        # Mevcut sütunları filtrele
+        available_columns = [col for col in display_columns if col in filtered_df.columns]
+        
+        st.dataframe(
+            filtered_df[available_columns],
+            use_container_width=True
+        )
+        
+        # Özet istatistikler
+        st.markdown("### 📈 Özet İstatistikler")
+        col1, col2, col3, col4 = st.columns(4)
+        
         with col1:
-            selected_address = st.selectbox(
-                "Adres Seçin:",
-                options=["Tümü"] + list(df['Depo Adresi'].unique()),
-                index=0
-            )
+            st.metric("Toplam TB", len(df))
         
         with col2:
-            selected_durum = st.selectbox(
-                "Sayım Durumu:",
-                options=["Tümü", "Sayıldı", "Bulunamadı", "Sayılmadı"],
-                index=0
-            )
+            sayilan_count = len(df[df['Sayım Durumu'] == 'Sayıldı'])
+            st.metric("Sayılan TB", sayilan_count)
         
-        # Filtrelenmiş veri
-        filtered_df = df.copy()
+        with col3:
+            bulunamayan_count = len(df[df['Sayım Durumu'] == 'Bulunamadı'])
+            st.metric("Bulunamayan TB", bulunamayan_count)
         
-        if selected_address != "Tümü":
-            filtered_df = filtered_df[filtered_df['Depo Adresi'] == selected_address]
-        
-        if selected_durum == "Sayıldı":
-            filtered_df = filtered_df[filtered_df['Sayım Durumu'] == 'Sayıldı']
-        elif selected_durum == "Bulunamadı":
-            filtered_df = filtered_df[filtered_df['Sayım Durumu'] == 'Bulunamadı']
-        elif selected_durum == "Sayılmadı":
-            filtered_df = filtered_df[filtered_df['Sayım Durumu'].isna() | (filtered_df['Sayım Durumu'] == '')]
-        
-        # Rapor tablosu
-        if not filtered_df.empty:
-            # Görüntülenecek sütunları belirle
-            display_columns = ['Depo Adresi', 'Taşıma Birimi (TB)', 'Parti', 'Miktar', 'Sayım Durumu']
-            
-            # Opsiyonel sütunları ekle
-            if 'Sayım Yapan' in filtered_df.columns:
-                display_columns.append('Sayım Yapan')
-            if 'Sayım Tarihi' in filtered_df.columns:
-                display_columns.append('Sayım Tarihi')
-            
-            # Mevcut sütunları filtrele
-            available_columns = [col for col in display_columns if col in filtered_df.columns]
-            
-            st.dataframe(
-                filtered_df[available_columns],
-                use_container_width=True
-            )
-            
-            # Özet istatistikler
-            st.markdown("### 📈 Özet İstatistikler")
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("Toplam TB", len(df))
-            
-            with col2:
-                sayilan_count = len(df[df['Sayım Durumu'] == 'Sayıldı'])
-                st.metric("Sayılan TB", sayilan_count)
-            
-            with col3:
-                bulunamayan_count = len(df[df['Sayım Durumu'] == 'Bulunamadı'])
-                st.metric("Bulunamayan TB", bulunamayan_count)
-            
-            with col4:
-                sayilmayan_count = len(df[df['Sayım Durumu'].isna() | (df['Sayım Durumu'] == '')])
-                st.metric("Sayılmayan TB", sayilmayan_count)
-        else:
-            st.info("Seçilen filtrelere uygun veri bulunamadı.")
-    
+        with col4:
+            sayilmayan_count = len(df[df['Sayım Durumu'].isna() | (df['Sayım Durumu'] == '')])
+            st.metric("Sayılmayan TB", sayilmayan_count)
     else:
-        st.error("Veriler yüklenemedi. Google Sheets URL'sini ve erişim izinlerini kontrol edin.")
+        st.info("Seçilen filtrelere uygun veri bulunamadı.")
 
 else:
-    st.info("👈 Lütfen soldaki menüden Google Sheets URL'sini girin.")
+    st.error("❌ Veriler yüklenemedi. Lütfen aşağıdaki kontrolleri yapın:")
+    st.markdown("""
+    1. **Spreadsheet ID:** `secrets.toml` dosyasında `[spreadsheet]` altında `id` parametresi tanımlanmış mı?
+    2. **Google Service Account:** `gcp_service_account` bilgileri doğru mu?
+    3. **Erişim İzinleri:** Service account'un spreadsheet'e erişim izni var mı?
+    4. **Sütun Yapısı:** Spreadsheet'te `Depo Adresi` ve `Taşıma Birimi (TB)` sütunları var mı?
+    """)
     
+    # Hata ayıklama bilgileri
+    with st.expander("🔧 Hata Ayıklama Bilgileri"):
+        try:
+            st.write("**Spreadsheet ID kontrol ediliyor...**")
+            spreadsheet_id = st.secrets["spreadsheet"]["id"]
+            st.success(f"✅ Spreadsheet ID bulundu: {spreadsheet_id}")
+            
+            st.write("**Google Sheets bağlantısı kontrol ediliyor...**")
+            client = init_google_sheets()
+            if client:
+                st.success("✅ Google Sheets bağlantısı başarılı")
+            else:
+                st.error("❌ Google Sheets bağlantısı başarısız")
+                
+        except Exception as e:
+            st.error(f"❌ Hata: {str(e)}")
