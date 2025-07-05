@@ -420,6 +420,48 @@ def get_address_tbs(df, address):
         return address_data
     return pd.DataFrame()
 
+def tb_exists_in_address(df, address, tb_input):
+    """TB'nin belirtilen adreste var olup olmadığını kontrol eder"""
+    address_data = get_address_tbs(df, address)
+    if address_data.empty:
+        return False, None
+    
+    # TB sütununu string'e çevir ve karşılaştır
+    address_data_copy = address_data.copy()
+    address_data_copy['TB_String'] = address_data_copy['Taşıma Birimi (TB)'].astype(str)
+    
+    # Hem string hem de sayı olarak arama yap
+    tb_input_str = str(tb_input).strip()
+    
+    # Exact match ara
+    exact_match = address_data_copy[address_data_copy['TB_String'] == tb_input_str]
+    
+    if not exact_match.empty:
+        return True, exact_match.iloc[0]
+    
+    # Eğer exact match bulunamazsa, numeric karşılaştırma dene
+    try:
+        tb_input_num = float(tb_input_str)
+        numeric_match = address_data_copy[address_data_copy['Taşıma Birimi (TB)'].astype(float) == tb_input_num]
+        if not numeric_match.empty:
+            return True, numeric_match.iloc[0]
+    except:
+        pass
+    
+    return False, None
+
+def debug_address_data(df, address):
+    """Debug için adres verilerini göster"""
+    address_data = get_address_tbs(df, address)
+    if not address_data.empty:
+        st.write(f"**{address} adresindeki TB'ler:**")
+        for idx, row in address_data.iterrows():
+            tb_value = row['Taşıma Birimi (TB)']
+            tb_type = type(tb_value).__name__
+            st.write(f"- TB: {tb_value} (Tür: {tb_type})")
+    else:
+        st.write(f"**{address} adresinde TB bulunamadı**")
+
 def count_sayilan_tbs(df, address):
     """Sayılan TB sayısını döndürür"""
     address_data = get_address_tbs(df, address)
@@ -562,13 +604,12 @@ if data_result[0] is not None:
         
         if st.button("✅ TB Kaydet", disabled=st.session_state.current_address is None):
             if tb_input and st.session_state.current_address:
-                # TB'yi kontrol et
-                address_tbs = get_address_tbs(df, st.session_state.current_address)
-                tb_row = address_tbs[address_tbs['Taşıma Birimi (TB)'] == tb_input]
+                # TB'yi kontrol et - YENİ FONKSİYON KULLAN
+                tb_exists, tb_row = tb_exists_in_address(df, st.session_state.current_address, tb_input)
                 
-                if not tb_row.empty:
-                    # TB bu adreste var mı?
-                    current_durum = tb_row['Sayım Durumu'].iloc[0]
+                if tb_exists:
+                    # TB bu adreste var
+                    current_durum = tb_row['Sayım Durumu'] if pd.notna(tb_row['Sayım Durumu']) else ''
                     
                     if current_durum == 'Sayıldı':
                         # Daha önce sayılmış
@@ -578,7 +619,9 @@ if data_result[0] is not None:
                         })
                     else:
                         # TB'yi sayıldı olarak işaretle
-                        if update_sayim_durumu(sheet, tb_input, 'Sayıldı', st.session_state.username):
+                        # Güncelleme için orijinal TB değerini kullan
+                        original_tb = tb_row['Taşıma Birimi (TB)']
+                        if update_sayim_durumu(sheet, str(original_tb), 'Sayıldı', st.session_state.username):
                             st.session_state.messages.append({
                                 'type': 'success',
                                 'message': f"TB başarıyla kaydedildi: {tb_input}"
@@ -591,8 +634,10 @@ if data_result[0] is not None:
                         'type': 'error',
                         'message': f"Bu TB bu adreste bulunamadı: {tb_input}"
                     })
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # DEBUG: Adres verilerini göster
+                    with st.expander("🔍 Debug Bilgileri"):
+                        debug_address_data(df, st.session_state.current_address)
     
     # Mesajları göster
     for msg in st.session_state.messages:
