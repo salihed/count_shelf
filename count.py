@@ -223,7 +223,29 @@ def logout():
 def init_google_sheets():
     """Google Sheets bağlantısını başlatır"""
     try:
-        # Service account credentials (secrets.toml'da saklanmalı)
+        # Service account credentials kontrol et
+        if "gcp_service_account" not in st.secrets:
+            st.error("❌ Google Service Account bilgileri bulunamadı!")
+            st.markdown("""
+            ### 🔧 Çözüm:
+            `secrets.toml` dosyanızda aşağıdaki yapıyı eklemelisiniz:
+            
+            ```toml
+            [gcp_service_account]
+            type = "service_account"
+            project_id = "your_project_id"
+            private_key_id = "your_private_key_id"
+            private_key = "-----BEGIN PRIVATE KEY-----\\nYOUR_PRIVATE_KEY\\n-----END PRIVATE KEY-----\\n"
+            client_email = "your_service_account@project.iam.gserviceaccount.com"
+            client_id = "your_client_id"
+            auth_uri = "https://accounts.google.com/o/oauth2/auth"
+            token_uri = "https://oauth2.googleapis.com/token"
+            auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+            client_x509_cert_url = "your_client_cert_url"
+            ```
+            """)
+            return None
+            
         creds_dict = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(creds_dict)
         client = gspread.authorize(creds)
@@ -241,6 +263,28 @@ def get_spreadsheet():
             return None, None
         
         # Spreadsheet ID'sini secrets'tan al
+        if "spreadsheet" not in st.secrets:
+            st.error("❌ Spreadsheet bilgileri bulunamadı!")
+            st.markdown("""
+            ### 🔧 Çözüm:
+            `secrets.toml` dosyanızda aşağıdaki yapıyı eklemelisiniz:
+            
+            ```toml
+            [spreadsheet]
+            id = "your_spreadsheet_id_here"
+            ```
+            
+            **Spreadsheet ID'sini nasıl bulursunuz:**
+            1. Google Sheets'te dosyanızı açın
+            2. URL'den ID'yi kopyalayın: `https://docs.google.com/spreadsheets/d/**SPREADSHEET_ID**/edit`
+            """)
+            return None, None
+            
+        if "id" not in st.secrets["spreadsheet"]:
+            st.error("❌ Spreadsheet ID bulunamadı!")
+            st.markdown("secrets.toml dosyasında `[spreadsheet]` altında `id` parametresi eksik!")
+            return None, None
+            
         spreadsheet_id = st.secrets["spreadsheet"]["id"]
         spreadsheet = client.open_by_key(spreadsheet_id)
         
@@ -659,25 +703,130 @@ if data_result[0] is not None:
 else:
     st.error("❌ Veriler yüklenemedi. Lütfen aşağıdaki kontrolleri yapın:")
     st.markdown("""
-    1. **Spreadsheet ID:** `secrets.toml` dosyasında `[spreadsheet]` altında `id` parametresi tanımlanmış mı?
-    2. **Google Service Account:** `gcp_service_account` bilgileri doğru mu?
-    3. **Erişim İzinleri:** Service account'un spreadsheet'e erişim izni var mı?
-    4. **Sütun Yapısı:** Spreadsheet'te `Depo Adresi` ve `Taşıma Birimi (TB)` sütunları var mı?
+    ## 🔧 Kurulum Rehberi
+    
+    ### 1. Google Service Account Oluşturma
+    1. [Google Cloud Console](https://console.cloud.google.com/) gidin
+    2. Yeni bir proje oluşturun veya mevcut projeyi seçin
+    3. **APIs & Services > Credentials** bölümüne gidin
+    4. **Create Credentials > Service Account** seçin
+    5. Service account oluşturun
+    6. **Keys** sekmesinden **Add Key > Create New Key > JSON** seçin
+    7. JSON dosyasını indirin
+    
+    ### 2. Google Sheets API Etkinleştirme
+    1. **APIs & Services > Library** bölümüne gidin
+    2. "Google Sheets API" arayın ve etkinleştirin
+    3. "Google Drive API" arayın ve etkinleştirin
+    
+    ### 3. Spreadsheet Erişim İzni
+    1. Google Sheets dosyanızı açın
+    2. **Share** butonuna tıklayın
+    3. Service account email adresini ekleyin (JSON'da `client_email`)
+    4. **Editor** yetkisi verin
+    
+    ### 4. secrets.toml Dosyası
+    Proje dizininizde `.streamlit/secrets.toml` dosyası oluşturun:
+    """)
+    
+    # secrets.toml örneği göster
+    st.code("""
+[gcp_service_account]
+type = "service_account"
+project_id = "your-project-id"
+private_key_id = "your-private-key-id"
+private_key = "-----BEGIN PRIVATE KEY-----\\nYOUR_PRIVATE_KEY_HERE\\n-----END PRIVATE KEY-----\\n"
+client_email = "your-service-account@your-project.iam.gserviceaccount.com"
+client_id = "your-client-id"
+auth_uri = "https://accounts.google.com/o/oauth2/auth"
+token_uri = "https://oauth2.googleapis.com/token"
+auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/your-service-account%40your-project.iam.gserviceaccount.com"
+
+[spreadsheet]
+id = "your_spreadsheet_id_here"
+
+[users]
+admin = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"  # password: hello
+user1 = "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f"  # password: secret123
+    """, language="toml")
+    
+    st.markdown("""
+    ### 5. Spreadsheet Yapısı
+    Excel/Google Sheets dosyanızda şu sütunlar olmalı:
+    - `Depo Adresi` (zorunlu)
+    - `Taşıma Birimi (TB)` (zorunlu)
+    - `Parti` (opsiyonel)
+    - `Miktar` (opsiyonel)
+    
+    Diğer sütunlar otomatik olarak eklenecek:
+    - `Sayım Durumu`
+    - `Sayım Yapan`
+    - `Sayım Tarihi`
+    - `Sayım Başlama Tarihi`
+    - `Sayım Bitiş Tarihi`
     """)
     
     # Hata ayıklama bilgileri
-    with st.expander("🔧 Hata Ayıklama Bilgileri"):
+    with st.expander("🔧 Detaylı Hata Ayıklama"):
+        st.write("**Mevcut secrets kontrol ediliyor...**")
+        
+        # Secrets kontrol et
         try:
-            st.write("**Spreadsheet ID kontrol ediliyor...**")
-            spreadsheet_id = st.secrets["spreadsheet"]["id"]
-            st.success(f"✅ Spreadsheet ID bulundu: {spreadsheet_id}")
+            secrets_keys = list(st.secrets.keys())
+            st.write(f"**Mevcut secrets anahtarları:** {secrets_keys}")
             
-            st.write("**Google Sheets bağlantısı kontrol ediliyor...**")
-            client = init_google_sheets()
-            if client:
-                st.success("✅ Google Sheets bağlantısı başarılı")
+            if "gcp_service_account" in st.secrets:
+                st.success("✅ gcp_service_account bulundu")
+                gcp_keys = list(st.secrets["gcp_service_account"].keys())
+                st.write(f"**GCP Service Account anahtarları:** {gcp_keys}")
             else:
-                st.error("❌ Google Sheets bağlantısı başarısız")
+                st.error("❌ gcp_service_account bulunamadı")
+                
+            if "spreadsheet" in st.secrets:
+                st.success("✅ spreadsheet bulundu")
+                if "id" in st.secrets["spreadsheet"]:
+                    st.success("✅ spreadsheet ID bulundu")
+                else:
+                    st.error("❌ spreadsheet ID bulunamadı")
+            else:
+                st.error("❌ spreadsheet bulunamadı")
+                
+            if "users" in st.secrets:
+                st.success("✅ users bulundu")
+                users_list = list(st.secrets["users"].keys())
+                st.write(f"**Kullanıcılar:** {users_list}")
+            else:
+                st.error("❌ users bulunamadı")
                 
         except Exception as e:
-            st.error(f"❌ Hata: {str(e)}")
+            st.error(f"❌ Secrets kontrol hatası: {str(e)}")
+            
+        st.markdown("---")
+        st.markdown("""
+        ### 📚 Faydalı Linkler:
+        - [Google Sheets API Python Hızlı Başlangıç](https://developers.google.com/sheets/api/quickstart/python)
+        - [Streamlit Secrets Management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)
+        - [gspread Dokumentasyonu](https://docs.gspread.org/en/latest/)
+        """)
+    
+    # Test amaçlı manuel veri girişi seçeneği
+    st.markdown("---")
+    st.subheader("🧪 Test Modu")
+    st.info("Google Sheets bağlantısı kurulamadığında test için kullanabilirsiniz.")
+    
+    if st.button("📝 Test Verisi Oluştur"):
+        # Test verisi oluştur
+        test_data = {
+            'Depo Adresi': ['A01-01-01', 'A01-01-02', 'A01-01-03', 'B02-01-01'],
+            'Taşıma Birimi (TB)': ['TB001', 'TB002', 'TB003', 'TB004'],
+            'Parti': ['P001', 'P002', 'P003', 'P004'],
+            'Miktar': [100, 200, 150, 300],
+            'Sayım Durumu': ['', '', '', ''],
+            'Sayım Yapan': ['', '', '', ''],
+            'Sayım Tarihi': ['', '', '', '']
+        }
+        
+        test_df = pd.DataFrame(test_data)
+        st.dataframe(test_df, use_container_width=True)
+        st.success("✅ Test verisi oluşturuldu! (Sadece görüntüleme amaçlı)")
