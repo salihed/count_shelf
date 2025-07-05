@@ -247,7 +247,14 @@ def init_google_sheets():
             return None
             
         creds_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(creds_dict)
+
+        # DÜZELTME: Gerekli scope'ları tanımla
+        scopes = [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive'
+        ]
+        # DÜZELTME: Scope'larla birlikte credentials oluştur
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
         return client
     except Exception as e:
