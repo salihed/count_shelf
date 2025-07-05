@@ -325,18 +325,41 @@ def load_data():
 def ensure_required_columns(sheet):
     """Gerekli sütunların var olduğundan emin olur"""
     try:
-        # Başlık satırını al
-        header_row = sheet.row_values(1)
+        # Cache'i temizle
+        st.cache_data.clear()
+        
+        # Başlık satırını al - daha güvenli yöntem
+        all_values = sheet.get_all_values()
+        if not all_values:
+            st.error("Spreadsheet boş!")
+            return False
+            
+        header_row = all_values[0]
         
         # Gerekli sütunları kontrol et ve ekle
         required_columns = ['Sayım Durumu', 'Sayım Yapan', 'Sayım Tarihi', 'Sayım Başlama Tarihi', 'Sayım Bitiş Tarihi']
         
+        new_columns = []
         for col in required_columns:
             if col not in header_row:
-                # Yeni sütun ekle
-                next_col = len(header_row) + 1
-                sheet.update_cell(1, next_col, col)
-                header_row.append(col)
+                new_columns.append(col)
+        
+        # Yeni sütunları toplu olarak ekle
+        if new_columns:
+            start_col = len(header_row) + 1
+            
+            # Batch update kullan
+            updates = []
+            for i, col in enumerate(new_columns):
+                col_letter = chr(ord('A') + start_col + i - 1)
+                updates.append({
+                    'range': f'{col_letter}1',
+                    'values': [[col]]
+                })
+            
+            # Batch update yap
+            if updates:
+                sheet.batch_update(updates)
         
         return True
     except Exception as e:
@@ -346,71 +369,201 @@ def ensure_required_columns(sheet):
 def update_sayim_durumu(sheet, tb_value, durum, username):
     """Sayım durumunu günceller"""
     try:
+        # Cache'i temizle
+        st.cache_data.clear()
+        
         # Gerekli sütunları kontrol et
-        ensure_required_columns(sheet)
+        if not ensure_required_columns(sheet):
+            return False
         
         # Tüm verileri al
         all_values = sheet.get_all_values()
-        
+        if not all_values:
+            st.error("Spreadsheet boş!")
+            return False
+            
         # Sütun indekslerini bul
         header_row = all_values[0]
+        
+        # Sütun indekslerini güvenli şekilde bul
+        try:
+            tb_col = header_row.index('Taşıma Birimi (TB)') + 1
+            durum_col = header_row.index('Sayım Durumu') + 1
+            sayim_yapan_col = header_row.index('Sayım Yapan') + 1
+            sayim_tarihi_col = header_row.index('Sayım Tarihi') + 1
+        except ValueError as e:
+            st.error(f"Gerekli sütun bulunamadı: {str(e)}")
+            return False
+        
+        # TB'yi bul ve güncelle
+        tb_found = False
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Batch update için hazırla
+        updates = []
+        
+        for i, row in enumerate(all_values[1:], start=2):
+            if len(row) > tb_col-1:  # Satır uzunluğu kontrolü
+                # TB değerini string olarak karşılaştır
+                row_tb = str(row[tb_col-1]).strip()
+                input_tb = str(tb_value).strip()
+                
+                if row_tb == input_tb:
+                    tb_found = True
+                    
+                    # Güncellenecek hücreleri hazırla
+                    col_letters = []
+                    col_letters.append(chr(ord('A') + durum_col - 1))  # Sayım Durumu
+                    col_letters.append(chr(ord('A') + sayim_yapan_col - 1))  # Sayım Yapan
+                    col_letters.append(chr(ord('A') + sayim_tarihi_col - 1))  # Sayım Tarihi
+                    
+                    values = [durum, username, current_time]
+                    
+                    for j, (col_letter, value) in enumerate(zip(col_letters, values)):
+                        updates.append({
+                            'range': f'{col_letter}{i}',
+                            'values': [[value]]
+                        })
+                    
+                    break
+        
+        if not tb_found:
+            st.error(f"TB bulunamadı: {tb_value}")
+            return False
+        
+        # Batch update yap
+        if updates:
+            try:
+                sheet.batch_update(updates)
+                st.success(f"TB güncellendi: {tb_value}")
+                return True
+            except Exception as e:
+                st.error(f"Batch update hatası: {str(e)}")
+                # Alternatif olarak tek tek güncelleme dene
+                return update_sayim_durumu_fallback(sheet, tb_value, durum, username)
+        
+        return True
+    except Exception as e:
+        st.error(f"Güncelleme hatası: {str(e)}")
+        return update_sayim_durumu_fallback(sheet, tb_value, durum, username)
+
+def update_sayim_durumu_fallback(sheet, tb_value, durum, username):
+    """Fallback güncelleme yöntemi"""
+    try:
+        # Tek tek hücre güncellemesi
+        all_values = sheet.get_all_values()
+        header_row = all_values[0]
+        
         tb_col = header_row.index('Taşıma Birimi (TB)') + 1
         durum_col = header_row.index('Sayım Durumu') + 1
         sayim_yapan_col = header_row.index('Sayım Yapan') + 1
         sayim_tarihi_col = header_row.index('Sayım Tarihi') + 1
         
-        # TB'yi bul ve güncelle
-        for i, row in enumerate(all_values[1:], start=2):
-            if row[tb_col-1] == tb_value:
-                # Sayım durumunu güncelle
-                sheet.update_cell(i, durum_col, durum)
-                
-                # Sayım yapan kullanıcıyı güncelle
-                sheet.update_cell(i, sayim_yapan_col, username)
-                
-                # Sayım tarihini güncelle
-                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                sheet.update_cell(i, sayim_tarihi_col, current_time)
-                
-                break
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        return True
+        for i, row in enumerate(all_values[1:], start=2):
+            if len(row) > tb_col-1:
+                row_tb = str(row[tb_col-1]).strip()
+                input_tb = str(tb_value).strip()
+                
+                if row_tb == input_tb:
+                    # Tek tek güncelle
+                    sheet.update_cell(i, durum_col, durum)
+                    sheet.update_cell(i, sayim_yapan_col, username)
+                    sheet.update_cell(i, sayim_tarihi_col, current_time)
+                    return True
+        
+        return False
     except Exception as e:
-        st.error(f"Güncelleme hatası: {str(e)}")
+        st.error(f"Fallback güncelleme hatası: {str(e)}")
         return False
 
 def update_address_sayim_durumu(sheet, address, durum, username):
     """Adres bazında sayım durumunu günceller"""
     try:
+        # Cache'i temizle
+        st.cache_data.clear()
+        
         # Gerekli sütunları kontrol et
-        ensure_required_columns(sheet)
+        if not ensure_required_columns(sheet):
+            return False
         
         # Tüm verileri al
         all_values = sheet.get_all_values()
-        
+        if not all_values:
+            return False
+            
         # Sütun indekslerini bul
         header_row = all_values[0]
-        address_col = header_row.index('Depo Adresi') + 1
         
-        # Sayım başlama/bitiş tarihi sütunları
+        try:
+            address_col = header_row.index('Depo Adresi') + 1
+            sayim_baslama_col = header_row.index('Sayım Başlama Tarihi') + 1
+            sayim_bitis_col = header_row.index('Sayım Bitiş Tarihi') + 1
+        except ValueError as e:
+            st.error(f"Gerekli sütun bulunamadı: {str(e)}")
+            return False
+        
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Batch update için hazırla
+        updates = []
+        
+        # Adrese ait tüm satırları bul ve güncelle
+        for i, row in enumerate(all_values[1:], start=2):
+            if len(row) > address_col-1 and row[address_col-1] == address:
+                if durum == 'Başladı':
+                    # Sayım başlama tarihini güncelle
+                    col_letter = chr(ord('A') + sayim_baslama_col - 1)
+                    updates.append({
+                        'range': f'{col_letter}{i}',
+                        'values': [[current_time]]
+                    })
+                elif durum == 'Tamamlandı':
+                    # Sayım bitiş tarihini güncelle
+                    col_letter = chr(ord('A') + sayim_bitis_col - 1)
+                    updates.append({
+                        'range': f'{col_letter}{i}',
+                        'values': [[current_time]]
+                    })
+        
+        # Batch update yap
+        if updates:
+            try:
+                sheet.batch_update(updates)
+                return True
+            except Exception as e:
+                st.error(f"Adres durumu batch update hatası: {str(e)}")
+                # Fallback - tek tek güncelleme
+                return update_address_sayim_durumu_fallback(sheet, address, durum, username)
+        
+        return True
+    except Exception as e:
+        st.error(f"Adres durumu güncelleme hatası: {str(e)}")
+        return False
+
+def update_address_sayim_durumu_fallback(sheet, address, durum, username):
+    """Adres durumu fallback güncelleme"""
+    try:
+        all_values = sheet.get_all_values()
+        header_row = all_values[0]
+        
+        address_col = header_row.index('Depo Adresi') + 1
         sayim_baslama_col = header_row.index('Sayım Başlama Tarihi') + 1
         sayim_bitis_col = header_row.index('Sayım Bitiş Tarihi') + 1
         
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Adrese ait tüm satırları bul ve güncelle
         for i, row in enumerate(all_values[1:], start=2):
-            if row[address_col-1] == address:
+            if len(row) > address_col-1 and row[address_col-1] == address:
                 if durum == 'Başladı':
-                    # Sayım başlama tarihini güncelle
                     sheet.update_cell(i, sayim_baslama_col, current_time)
                 elif durum == 'Tamamlandı':
-                    # Sayım bitiş tarihini güncelle
                     sheet.update_cell(i, sayim_bitis_col, current_time)
         
         return True
     except Exception as e:
-        st.error(f"Adres durumu güncelleme hatası: {str(e)}")
+        st.error(f"Adres durumu fallback hatası: {str(e)}")
         return False
 
 def get_address_tbs(df, address):
