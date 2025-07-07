@@ -921,7 +921,7 @@ if df is not None and not df.empty:
     
     st.dataframe(address_summary, use_container_width=True)
 
-    else:
+else:
     st.error("❌ Veriler yüklenemedi. Lütfen aşağıdaki kontrolleri yapın:")
     st.markdown("""
     ## 🔧 Kurulum Rehberi
