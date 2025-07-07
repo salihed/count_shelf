@@ -5,6 +5,7 @@ from google.oauth2.service_account import Credentials
 import json
 import hashlib
 from datetime import datetime
+from google.auth.transport.requests import Request
 
 # Sayfa konfigürasyonu
 st.set_page_config(
@@ -248,15 +249,27 @@ def init_google_sheets():
             
         creds_dict = st.secrets["gcp_service_account"]
 
-        # DÜZELTME: Gerekli scope'ları tanımla
+        # Gerekli scope'ları tanımla
         scopes = [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
         ]
-        # DÜZELTME: Scope'larla birlikte credentials oluştur
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        # Service account credentials'ı doğru şekilde oluştur
+        creds = Credentials.from_service_account_info(
+            creds_dict, 
+            scopes=scopes
+        )
+        
+        # Credentials'ı refresh et
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+        
+        # gspread client'ı oluştur
         client = gspread.authorize(creds)
+        
         return client
+        
     except Exception as e:
         st.error(f"Google Sheets bağlantısı kurulamadı: {str(e)}")
         return None
