@@ -355,8 +355,8 @@ def ensure_required_columns(sheet):
         return True
     except Exception as e:
         st.error(f"Sütun kontrol hatası: {str(e)}")
-        return Falsey
-
+        return False
+    
 def update_sayim_durumu(sheet, tb_value, durum, username):
     """Sayım durumunu günceller"""
     try:
