@@ -746,325 +746,326 @@ if df is not None and not df.empty:
             disabled=st.session_state.current_address is None
         )
         
-if st.button("✅ TB Kaydet", disabled=st.session_state.current_address is None):
-           if tb_input and st.session_state.current_address:
-               # TB'yi kontrol et
-               tb_exists, tb_row = tb_exists_in_address(df, st.session_state.current_address, tb_input)
-               
-               if tb_exists:
-                   # TB bu adreste var
-                   current_durum = tb_row['Sayım Durumu'] if pd.notna(tb_row['Sayım Durumu']) else ''
-                   
-                   if current_durum == 'Sayıldı':
-                       # Daha önce sayılmış
-                       st.session_state.messages.append({
-                           'type': 'warning',
-                           'message': f"Bu TB daha önce sayıldı: {tb_input}"
-                       })
-                   else:
-                       # TB'yi sayıldı olarak işaretle
-                       original_tb = tb_row['Taşıma Birimi (TB)']
-                       if update_sayim_durumu(str(original_tb), 'Sayıldı', st.session_state.username):
-                           st.session_state.messages.append({
-                               'type': 'success',
-                               'message': f"TB başarıyla kaydedildi: {tb_input}"
-                           })
-                           st.cache_data.clear()  # Cache'i temizle
-                           st.rerun()
-                       else:
-                           st.session_state.messages.append({
-                               'type': 'error',
-                               'message': f"TB kaydedilirken hata oluştu: {tb_input}"
-                           })
-               else:
-                   # TB bu adreste yok
-                   st.session_state.messages.append({
-                       'type': 'error',
-                       'message': f"Bu TB bu adreste bulunamadı: {tb_input}"
-                   })
-   
-   st.markdown('</div>', unsafe_allow_html=True)
-   
-   # Mesajları göster
-   for msg in st.session_state.messages:
-       if msg['type'] == 'success':
-           st.markdown(f'<div class="success-message">✅ {msg["message"]}</div>', unsafe_allow_html=True)
-       elif msg['type'] == 'warning':
-           st.markdown(f'<div class="warning-message">⚠️ {msg["message"]}</div>', unsafe_allow_html=True)
-       elif msg['type'] == 'error':
-           st.markdown(f'<div class="error-message">❌ {msg["message"]}</div>', unsafe_allow_html=True)
-   
-   # Sayımı bitirme butonu
-   if st.session_state.current_address:
-       st.markdown("---")
-       
-       col1, col2, col3 = st.columns([1, 2, 1])
-       with col2:
-           if st.button("🏁 Bu Adresin Sayımını Bitir", type="primary"):
-               # Sayılmayan TB'leri "Bulunamadı" olarak işaretle
-               success, bulunamayan_list = finish_address_sayim(
-                   st.session_state.current_address, 
-                   st.session_state.username
-               )
-               
-               if success:
-                   if bulunamayan_list:
-                       st.warning(f"⚠️ {len(bulunamayan_list)} adet TB bulunamadı olarak işaretlendi:")
-                       
-                       # Bulunamayan TB'leri göster
-                       for tb_data in bulunamayan_list:
-                           st.write(f"- **TB:** {tb_data['Taşıma Birimi (TB)']} | **Parti:** {tb_data.get('Parti', 'N/A')} | **Miktar:** {tb_data.get('Miktar', 'N/A')}")
-                   else:
-                       st.success("✅ Bu adresteki tüm TB'ler sayıldı!")
-                   
-                   st.cache_data.clear()
-                   st.session_state.current_address = None
-                   st.session_state.messages = []
-                   st.rerun()
-               else:
-                   st.error("❌ Adres sayımı bitirilemedi. Lütfen tekrar deneyin.")
-   
-   # Rapor sekmesi
-   st.markdown("---")
-   st.subheader("📊 Sayım Durumu Raporu")
-   
-   # Filtreler
-   col1, col2 = st.columns(2)
-   with col1:
-       selected_address = st.selectbox(
-           "Adres Seçin:",
-           options=["Tümü"] + sorted(df['Depo Adresi'].unique()),
-           index=0
-       )
-   
-   with col2:
-       selected_durum = st.selectbox(
-           "Sayım Durumu:",
-           options=["Tümü", "Sayıldı", "Bulunamadı", "Sayılmadı"],
-           index=0
-       )
-   
-   # Filtrelenmiş veri
-   filtered_df = df.copy()
-   
-   if selected_address != "Tümü":
-       filtered_df = filtered_df[filtered_df['Depo Adresi'] == selected_address]
-   
-   if selected_durum == "Sayıldı":
-       filtered_df = filtered_df[filtered_df['Sayım Durumu'] == 'Sayıldı']
-   elif selected_durum == "Bulunamadı":
-       filtered_df = filtered_df[filtered_df['Sayım Durumu'] == 'Bulunamadı']
-   elif selected_durum == "Sayılmadı":
-       filtered_df = filtered_df[filtered_df['Sayım Durumu'].isna() | (filtered_df['Sayım Durumu'] == '')]
-   
-   # Rapor tablosu
-   if not filtered_df.empty:
-       # Görüntülenecek sütunları belirle
-       display_columns = ['Depo Adresi', 'Taşıma Birimi (TB)', 'Parti', 'Miktar', 'Sayım Durumu']
-       
-       # Opsiyonel sütunları ekle
-       optional_columns = ['Sayım Yapan', 'Sayım Tarihi', 'Sayım Başlama Tarihi', 'Sayım Bitiş Tarihi']
-       for col in optional_columns:
-           if col in filtered_df.columns:
-               display_columns.append(col)
-       
-       # Mevcut sütunları filtrele
-       available_columns = [col for col in display_columns if col in filtered_df.columns]
-       
-       st.dataframe(
-           filtered_df[available_columns],
-           use_container_width=True,
-           hide_index=True
-       )
-       
-       # Özet istatistikler
-       st.markdown("### 📈 Özet İstatistikler")
-       col1, col2, col3, col4 = st.columns(4)
-       
-       with col1:
-           st.metric("Toplam TB", len(df))
-       
-       with col2:
-           sayilan_count = len(df[df['Sayım Durumu'] == 'Sayıldı'])
-           st.metric("Sayılan TB", sayilan_count)
-       
-       with col3:
-           bulunamayan_count = len(df[df['Sayım Durumu'] == 'Bulunamadı'])
-           st.metric("Bulunamayan TB", bulunamayan_count)
-       
-       with col4:
-           sayilmayan_count = len(df[df['Sayım Durumu'].isna() | (df['Sayım Durumu'] == '')])
-           st.metric("Sayılmayan TB", sayilmayan_count)
-       
-       # İlerleme yüzdesi
-       if len(df) > 0:
-           completion_rate = (sayilan_count + bulunamayan_count) / len(df) * 100
-           st.progress(completion_rate / 100)
-           st.write(f"**Tamamlanma Oranı:** {completion_rate:.1f}%")
-   else:
-       st.info("Seçilen filtrelere uygun veri bulunamadı.")
-   
-   # Adres bazında özet
-   st.markdown("### 📍 Adres Bazında Özet")
-   address_summary = df.groupby('Depo Adresi').agg({
-       'Taşıma Birimi (TB)': 'count',
-       'Sayım Durumu': lambda x: (x == 'Sayıldı').sum()
-   }).rename(columns={
-       'Taşıma Birimi (TB)': 'Toplam_TB',
-       'Sayım Durumu': 'Sayılan_TB'
-   })
-   
-   address_summary['Bulunamayan_TB'] = df.groupby('Depo Adresi')['Sayım Durumu'].apply(lambda x: (x == 'Bulunamadı').sum())
-   address_summary['Sayılmayan_TB'] = address_summary['Toplam_TB'] - address_summary['Sayılan_TB'] - address_summary['Bulunamayan_TB']
-   address_summary['Tamamlanma_Oranı'] = ((address_summary['Sayılan_TB'] + address_summary['Bulunamayan_TB']) / address_summary['Toplam_TB'] * 100).round(1)
-   
-   st.dataframe(address_summary, use_container_width=True)
+    if st.button("✅ TB Kaydet", disabled=st.session_state.current_address is None):
+        if tb_input and st.session_state.current_address:
+            # TB'yi kontrol et
+            tb_exists, tb_row = tb_exists_in_address(df, st.session_state.current_address, tb_input)
 
-else:
-   st.error("❌ Veriler yüklenemedi. Lütfen aşağıdaki kontrolleri yapın:")
-   st.markdown("""
-   ## 🔧 Kurulum Rehberi
-   
-   ### 1. Google Service Account Oluşturma
-   1. [Google Cloud Console](https://console.cloud.google.com/) gidin
-   2. Yeni bir proje oluşturun veya mevcut projeyi seçin
-   3. **APIs & Services > Credentials** bölümüne gidin
-   4. **Create Credentials > Service Account** seçin
-   5. Service account oluşturun
-   6. **Keys** sekmesinden **Add Key > Create New Key > JSON** seçin
-   7. JSON dosyasını indirin
-   
-   ### 2. Google Sheets API Etkinleştirme
-   1. **APIs & Services > Library** bölümüne gidin
-   2. "Google Sheets API" arayın ve etkinleştirin
-   3. "Google Drive API" arayın ve etkinleştirin
-   
-   ### 3. Spreadsheet Erişim İzni
-   1. Google Sheets dosyanızı açın
-   2. **Share** butonuna tıklayın
-   3. Service account email adresini ekleyin (JSON'da `client_email`)
-   4. **Editor** yetkisi verin
-   
-   ### 4. Gerekli Kütüphaneler
-   Aşağıdaki kütüphaneleri yükleyin:
-   """)
-   
-   st.code("""
-pip install --upgrade gspread>=5.12.0 google-auth>=2.17.0 google-auth-oauthlib>=1.0.0 google-auth-httplib2>=0.1.0 pandas>=1.5.0 streamlit>=1.28.0
-   """, language="bash")
-   
-   st.markdown("""
-   ### 5. secrets.toml Dosyası
-   Proje dizininizde `.streamlit/secrets.toml` dosyası oluşturun:
-   """)
-   
-   # secrets.toml örneği göster
-   st.code("""
-[gcp_service_account]
-type = "service_account"
-project_id = "your-project-id"
-private_key_id = "your-private-key-id"
-private_key = "-----BEGIN PRIVATE KEY-----\\nYOUR_PRIVATE_KEY_HERE\\n-----END PRIVATE KEY-----\\n"
-client_email = "your-service-account@your-project.iam.gserviceaccount.com"
-client_id = "your-client-id"
-auth_uri = "https://accounts.google.com/o/oauth2/auth"
-token_uri = "https://oauth2.googleapis.com/token"
-auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
-client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/your-service-account%40your-project.iam.gserviceaccount.com"
+            if tb_exists:
+                # TB bu adreste var
+                current_durum = tb_row['Sayım Durumu'] if pd.notna(tb_row['Sayım Durumu']) else ''
 
-[spreadsheet]
-id = "your_spreadsheet_id_here"
+                if current_durum == 'Sayıldı':
+                    # Daha önce sayılmış
+                    st.session_state.messages.append({
+                        'type': 'warning',
+                        'message': f"Bu TB daha önce sayıldı: {tb_input}"
+                    })
+                else:
+                    # TB'yi sayıldı olarak işaretle
+                    original_tb = tb_row['Taşıma Birimi (TB)']
+                    if update_sayim_durumu(str(original_tb), 'Sayıldı', st.session_state.username):
+                        st.session_state.messages.append({
+                            'type': 'success',
+                            'message': f"TB başarıyla kaydedildi: {tb_input}"
+                        })
+                        st.cache_data.clear()  # Cache'i temizle
+                        st.rerun()
+                    else:
+                        st.session_state.messages.append({
+                            'type': 'error',
+                            'message': f"TB kaydedilirken hata oluştu: {tb_input}"
+                        })
+            else:
+                # TB bu adreste yok
+                st.session_state.messages.append({
+                    'type': 'error',
+                    'message': f"Bu TB bu adreste bulunamadı: {tb_input}"
+                })
 
-[users]
-admin = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"  # password: hello
-user1 = "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f"  # password: secret123
-   """, language="toml")
-   
-   st.markdown("""
-   ### 6. Spreadsheet Yapısı
-   Excel/Google Sheets dosyanızda şu sütunlar olmalı:
-   - `Depo Adresi` (zorunlu)
-   - `Taşıma Birimi (TB)` (zorunlu)
-   - `Parti` (opsiyonel)
-   - `Miktar` (opsiyonel)
-   
-   Diğer sütunlar otomatik olarak eklenecek:
-   - `Sayım Durumu`
-   - `Sayım Yapan`
-   - `Sayım Tarihi`
-   - `Sayım Başlama Tarihi`
-   - `Sayım Bitiş Tarihi`
-   """)
-   
-   # Hata ayıklama bilgileri
-   with st.expander("🔧 Detaylı Hata Ayıklama"):
-       st.write("**Mevcut secrets kontrol ediliyor...**")
-       
-       # Secrets kontrol et
-       try:
-           secrets_keys = list(st.secrets.keys())
-           st.write(f"**Mevcut secrets anahtarları:** {secrets_keys}")
-           
-           if "gcp_service_account" in st.secrets:
-               st.success("✅ gcp_service_account bulundu")
-               gcp_keys = list(st.secrets["gcp_service_account"].keys())
-               st.write(f"**GCP Service Account anahtarları:** {gcp_keys}")
-           else:
-               st.error("❌ gcp_service_account bulunamadı")
-               
-           if "spreadsheet" in st.secrets:
-               st.success("✅ spreadsheet bulundu")
-               if "id" in st.secrets["spreadsheet"]:
-                   st.success("✅ spreadsheet ID bulundu")
-               else:
-                   st.error("❌ spreadsheet ID bulunamadı")
-           else:
-               st.error("❌ spreadsheet bulunamadı")
-               
-           if "users" in st.secrets:
-               st.success("✅ users bulundu")
-               users_list = list(st.secrets["users"].keys())
-               st.write(f"**Kullanıcılar:** {users_list}")
-           else:
-               st.error("❌ users bulunamadı")
-               
-       except Exception as e:
-           st.error(f"❌ Secrets kontrol hatası: {str(e)}")
-           
-       st.markdown("---")
-       st.markdown("""
-       ### 📚 Faydalı Linkler:
-       - [Google Sheets API Python Hızlı Başlangıç](https://developers.google.com/sheets/api/quickstart/python)
-       - [Streamlit Secrets Management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)
-       - [gspread Dokumentasyonu](https://docs.gspread.org/en/latest/)
-       """)
-   
-   # Test amaçlı manuel veri girişi seçeneği
-   st.markdown("---")
-   st.subheader("🧪 Test Modu")
-   st.info("Google Sheets bağlantısı kurulamadığında test için kullanabilirsiniz.")
-   
-   if st.button("📝 Test Verisi Oluştur"):
-       # Test verisi oluştur
-       test_data = {
-           'Depo Adresi': ['A01-01-01', 'A01-01-02', 'A01-01-03', 'B02-01-01'],
-           'Taşıma Birimi (TB)': ['TB001', 'TB002', 'TB003', 'TB004'],
-           'Parti': ['P001', 'P002', 'P003', 'P004'],
-           'Miktar': [100, 200, 150, 300],
-           'Sayım Durumu': ['', '', '', ''],
-           'Sayım Yapan': ['', '', '', ''],
-           'Sayım Tarihi': ['', '', '', '']
-       }
-       
-       test_df = pd.DataFrame(test_data)
-       st.dataframe(test_df, use_container_width=True)
-       st.success("✅ Test verisi oluşturuldu! (Sadece görüntüleme amaçlı)")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# Footer
-st.markdown("---")
-st.markdown("""
-<div style="text-align: center; color: #666; font-size: 0.9em;">
-   <p>📦 Depo Sayım Programı v2.0 | Geliştirici: AI Assistant</p>
-   <p>⚡ Streamlit ile geliştirilmiştir</p>
-</div>
-""", unsafe_allow_html=True)
+    # Mesajları göster
+    for msg in st.session_state.messages:
+        if msg['type'] == 'success':
+            st.markdown(f'<div class="success-message">✅ {msg["message"]}</div>', unsafe_allow_html=True)
+        elif msg['type'] == 'warning':
+            st.markdown(f'<div class="warning-message">⚠️ {msg["message"]}</div>', unsafe_allow_html=True)
+        elif msg['type'] == 'error':
+            st.markdown(f'<div class="error-message">❌ {msg["message"]}</div>', unsafe_allow_html=True)
+
+    # Sayımı bitirme butonu
+    if st.session_state.current_address:
+        st.markdown("---")
+
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🏁 Bu Adresin Sayımını Bitir", type="primary"):
+                # Sayılmayan TB'leri "Bulunamadı" olarak işaretle
+                success, bulunamayan_list = finish_address_sayim(
+                    st.session_state.current_address, 
+                    st.session_state.username
+                )
+
+                if success:
+                    if bulunamayan_list:
+                        st.warning(f"⚠️ {len(bulunamayan_list)} adet TB bulunamadı olarak işaretlendi:")
+
+                        # Bulunamayan TB'leri göster
+                        for tb_data in bulunamayan_list:
+                            st.write(f"- **TB:** {tb_data['Taşıma Birimi (TB)']} | **Parti:** {tb_data.get('Parti', 'N/A')} | **Miktar:** {tb_data.get('Miktar', 'N/A')}")
+                    else:
+                        st.success("✅ Bu adresteki tüm TB'ler sayıldı!")
+
+                    st.cache_data.clear()
+                    st.session_state.current_address = None
+                    st.session_state.messages = []
+                    st.rerun()
+                else:
+                    st.error("❌ Adres sayımı bitirilemedi. Lütfen tekrar deneyin.")
+
+   
+    # Rapor sekmesi
+    st.markdown("---")
+    st.subheader("📊 Sayım Durumu Raporu")
+    
+    # Filtreler
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_address = st.selectbox(
+            "Adres Seçin:",
+            options=["Tümü"] + sorted(df['Depo Adresi'].unique()),
+            index=0
+        )
+    
+    with col2:
+        selected_durum = st.selectbox(
+            "Sayım Durumu:",
+            options=["Tümü", "Sayıldı", "Bulunamadı", "Sayılmadı"],
+            index=0
+        )
+    
+    # Filtrelenmiş veri
+    filtered_df = df.copy()
+    
+    if selected_address != "Tümü":
+        filtered_df = filtered_df[filtered_df['Depo Adresi'] == selected_address]
+    
+    if selected_durum == "Sayıldı":
+        filtered_df = filtered_df[filtered_df['Sayım Durumu'] == 'Sayıldı']
+    elif selected_durum == "Bulunamadı":
+        filtered_df = filtered_df[filtered_df['Sayım Durumu'] == 'Bulunamadı']
+    elif selected_durum == "Sayılmadı":
+        filtered_df = filtered_df[filtered_df['Sayım Durumu'].isna() | (filtered_df['Sayım Durumu'] == '')]
+    
+    # Rapor tablosu
+    if not filtered_df.empty:
+        # Görüntülenecek sütunları belirle
+        display_columns = ['Depo Adresi', 'Taşıma Birimi (TB)', 'Parti', 'Miktar', 'Sayım Durumu']
+        
+        # Opsiyonel sütunları ekle
+        optional_columns = ['Sayım Yapan', 'Sayım Tarihi', 'Sayım Başlama Tarihi', 'Sayım Bitiş Tarihi']
+        for col in optional_columns:
+            if col in filtered_df.columns:
+                display_columns.append(col)
+        
+        # Mevcut sütunları filtrele
+        available_columns = [col for col in display_columns if col in filtered_df.columns]
+        
+        st.dataframe(
+            filtered_df[available_columns],
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Özet istatistikler
+        st.markdown("### 📈 Özet İstatistikler")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Toplam TB", len(df))
+        
+        with col2:
+            sayilan_count = len(df[df['Sayım Durumu'] == 'Sayıldı'])
+            st.metric("Sayılan TB", sayilan_count)
+        
+        with col3:
+            bulunamayan_count = len(df[df['Sayım Durumu'] == 'Bulunamadı'])
+            st.metric("Bulunamayan TB", bulunamayan_count)
+        
+        with col4:
+            sayilmayan_count = len(df[df['Sayım Durumu'].isna() | (df['Sayım Durumu'] == '')])
+            st.metric("Sayılmayan TB", sayilmayan_count)
+        
+        # İlerleme yüzdesi
+        if len(df) > 0:
+            completion_rate = (sayilan_count + bulunamayan_count) / len(df) * 100
+            st.progress(completion_rate / 100)
+            st.write(f"**Tamamlanma Oranı:** {completion_rate:.1f}%")
+    else:
+        st.info("Seçilen filtrelere uygun veri bulunamadı.")
+    
+    # Adres bazında özet
+    st.markdown("### 📍 Adres Bazında Özet")
+    address_summary = df.groupby('Depo Adresi').agg({
+        'Taşıma Birimi (TB)': 'count',
+        'Sayım Durumu': lambda x: (x == 'Sayıldı').sum()
+    }).rename(columns={
+        'Taşıma Birimi (TB)': 'Toplam_TB',
+        'Sayım Durumu': 'Sayılan_TB'
+    })
+    
+    address_summary['Bulunamayan_TB'] = df.groupby('Depo Adresi')['Sayım Durumu'].apply(lambda x: (x == 'Bulunamadı').sum())
+    address_summary['Sayılmayan_TB'] = address_summary['Toplam_TB'] - address_summary['Sayılan_TB'] - address_summary['Bulunamayan_TB']
+    address_summary['Tamamlanma_Oranı'] = ((address_summary['Sayılan_TB'] + address_summary['Bulunamayan_TB']) / address_summary['Toplam_TB'] * 100).round(1)
+    
+    st.dataframe(address_summary, use_container_width=True)
+
+    else:
+    st.error("❌ Veriler yüklenemedi. Lütfen aşağıdaki kontrolleri yapın:")
+    st.markdown("""
+    ## 🔧 Kurulum Rehberi
+    
+    ### 1. Google Service Account Oluşturma
+    1. [Google Cloud Console](https://console.cloud.google.com/) gidin
+    2. Yeni bir proje oluşturun veya mevcut projeyi seçin
+    3. **APIs & Services > Credentials** bölümüne gidin
+    4. **Create Credentials > Service Account** seçin
+    5. Service account oluşturun
+    6. **Keys** sekmesinden **Add Key > Create New Key > JSON** seçin
+    7. JSON dosyasını indirin
+    
+    ### 2. Google Sheets API Etkinleştirme
+    1. **APIs & Services > Library** bölümüne gidin
+    2. "Google Sheets API" arayın ve etkinleştirin
+    3. "Google Drive API" arayın ve etkinleştirin
+    
+    ### 3. Spreadsheet Erişim İzni
+    1. Google Sheets dosyanızı açın
+    2. **Share** butonuna tıklayın
+    3. Service account email adresini ekleyin (JSON'da `client_email`)
+    4. **Editor** yetkisi verin
+    
+    ### 4. Gerekli Kütüphaneler
+    Aşağıdaki kütüphaneleri yükleyin:
+    """)
+    
+    st.code("""
+    pip install --upgrade gspread>=5.12.0 google-auth>=2.17.0 google-auth-oauthlib>=1.0.0 google-auth-httplib2>=0.1.0 pandas>=1.5.0 streamlit>=1.28.0
+    """, language="bash")
+    
+    st.markdown("""
+    ### 5. secrets.toml Dosyası
+    Proje dizininizde `.streamlit/secrets.toml` dosyası oluşturun:
+    """)
+    
+    # secrets.toml örneği göster
+    st.code("""
+    [gcp_service_account]
+    type = "service_account"
+    project_id = "your-project-id"
+    private_key_id = "your-private-key-id"
+    private_key = "-----BEGIN PRIVATE KEY-----\\nYOUR_PRIVATE_KEY_HERE\\n-----END PRIVATE KEY-----\\n"
+    client_email = "your-service-account@your-project.iam.gserviceaccount.com"
+    client_id = "your-client-id"
+    auth_uri = "https://accounts.google.com/o/oauth2/auth"
+    token_uri = "https://oauth2.googleapis.com/token"
+    auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+    client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/your-service-account%40your-project.iam.gserviceaccount.com"
+
+    [spreadsheet]
+    id = "your_spreadsheet_id_here"
+
+    [users]
+    admin = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"  # password: hello
+    user1 = "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f"  # password: secret123
+    """, language="toml")
+    
+    st.markdown("""
+    ### 6. Spreadsheet Yapısı
+    Excel/Google Sheets dosyanızda şu sütunlar olmalı:
+    - `Depo Adresi` (zorunlu)
+    - `Taşıma Birimi (TB)` (zorunlu)
+    - `Parti` (opsiyonel)
+    - `Miktar` (opsiyonel)
+    
+    Diğer sütunlar otomatik olarak eklenecek:
+    - `Sayım Durumu`
+    - `Sayım Yapan`
+    - `Sayım Tarihi`
+    - `Sayım Başlama Tarihi`
+    - `Sayım Bitiş Tarihi`
+    """)
+    
+    # Hata ayıklama bilgileri
+    with st.expander("🔧 Detaylı Hata Ayıklama"):
+        st.write("**Mevcut secrets kontrol ediliyor...**")
+        
+        # Secrets kontrol et
+        try:
+            secrets_keys = list(st.secrets.keys())
+            st.write(f"**Mevcut secrets anahtarları:** {secrets_keys}")
+            
+            if "gcp_service_account" in st.secrets:
+                st.success("✅ gcp_service_account bulundu")
+                gcp_keys = list(st.secrets["gcp_service_account"].keys())
+                st.write(f"**GCP Service Account anahtarları:** {gcp_keys}")
+            else:
+                st.error("❌ gcp_service_account bulunamadı")
+                
+            if "spreadsheet" in st.secrets:
+                st.success("✅ spreadsheet bulundu")
+                if "id" in st.secrets["spreadsheet"]:
+                    st.success("✅ spreadsheet ID bulundu")
+                else:
+                    st.error("❌ spreadsheet ID bulunamadı")
+            else:
+                st.error("❌ spreadsheet bulunamadı")
+                
+            if "users" in st.secrets:
+                st.success("✅ users bulundu")
+                users_list = list(st.secrets["users"].keys())
+                st.write(f"**Kullanıcılar:** {users_list}")
+            else:
+                st.error("❌ users bulunamadı")
+                
+        except Exception as e:
+            st.error(f"❌ Secrets kontrol hatası: {str(e)}")
+            
+        st.markdown("---")
+        st.markdown("""
+        ### 📚 Faydalı Linkler:
+        - [Google Sheets API Python Hızlı Başlangıç](https://developers.google.com/sheets/api/quickstart/python)
+        - [Streamlit Secrets Management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)
+        - [gspread Dokumentasyonu](https://docs.gspread.org/en/latest/)
+        """)
+    
+    # Test amaçlı manuel veri girişi seçeneği
+    st.markdown("---")
+    st.subheader("🧪 Test Modu")
+    st.info("Google Sheets bağlantısı kurulamadığında test için kullanabilirsiniz.")
+    
+    if st.button("📝 Test Verisi Oluştur"):
+        # Test verisi oluştur
+        test_data = {
+            'Depo Adresi': ['A01-01-01', 'A01-01-02', 'A01-01-03', 'B02-01-01'],
+            'Taşıma Birimi (TB)': ['TB001', 'TB002', 'TB003', 'TB004'],
+            'Parti': ['P001', 'P002', 'P003', 'P004'],
+            'Miktar': [100, 200, 150, 300],
+            'Sayım Durumu': ['', '', '', ''],
+            'Sayım Yapan': ['', '', '', ''],
+            'Sayım Tarihi': ['', '', '', '']
+        }
+        
+        test_df = pd.DataFrame(test_data)
+        st.dataframe(test_df, use_container_width=True)
+        st.success("✅ Test verisi oluşturuldu! (Sadece görüntüleme amaçlı)")
+
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666; font-size: 0.9em;">
+    <p>📦 Depo Sayım Programı v2.0 | Geliştirici: AI Assistant</p>
+    <p>⚡ Streamlit ile geliştirilmiştir</p>
+    </div>
+    """, unsafe_allow_html=True)
