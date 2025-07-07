@@ -6,7 +6,7 @@ import json
 import hashlib
 from datetime import datetime
 from google.auth.transport.requests import Request
-import google.auth
+
 
 # Sayfa konfigürasyonu
 st.set_page_config(
@@ -228,34 +228,48 @@ def init_google_sheets():
         # Service account credentials kontrol et
         if "gcp_service_account" not in st.secrets:
             st.error("❌ Google Service Account bilgileri bulunamadı!")
+            st.markdown("""
+            ### 🔧 Çözüm:
+            `secrets.toml` dosyanızda aşağıdaki yapıyı eklemelisiniz:
+            
+            ```toml
+            [gcp_service_account]
+            type = "service_account"
+            project_id = "your_project_id"
+            private_key_id = "your_private_key_id"
+            private_key = "-----BEGIN PRIVATE KEY-----\\nYOUR_PRIVATE_KEY\\n-----END PRIVATE KEY-----\\n"
+            client_email = "your_service_account@project.iam.gserviceaccount.com"
+            client_id = "your_client_id"
+            auth_uri = "https://accounts.google.com/o/oauth2/auth"
+            token_uri = "https://oauth2.googleapis.com/token"
+            auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+            client_x509_cert_url = "your_client_cert_url"
+            ```
+            """)
             return None
             
         creds_dict = st.secrets["gcp_service_account"]
 
-        # DÜZELTME: Scope'ları tanımla
+        # Gerekli scope'ları tanımla
         scopes = [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
         ]
-        
-        # DÜZELTME: Service account credentials'ı doğru şekilde oluştur
+        # Service account credentials'ı doğru şekilde oluştur
         creds = Credentials.from_service_account_info(
             creds_dict, 
             scopes=scopes
         )
         
-        # DÜZELTME: Cache'i temizle ve yeni client oluştur
-        st.cache_resource.clear()
+        # Credentials'ı refresh et
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
+                creds.refresh(Request())
         
-        # DÜZELTME: gspread client'ı oluştur - daha basit yöntem
-        try:
-            client = gspread.authorize(creds)
-            # Test bağlantısı
-            _ = client.list_spreadsheet_files()
-            return client
-        except Exception as inner_e:
-            st.error(f"gspread authorize hatası: {str(inner_e)}")
-            return None
+        # gspread client'ı oluştur
+        client = gspread.authorize(creds)
+        
+        return client
         
     except Exception as e:
         st.error(f"Google Sheets bağlantısı kurulamadı: {str(e)}")
@@ -325,10 +339,6 @@ def load_data():
 def ensure_required_columns(sheet):
     """Gerekli sütunların var olduğundan emin olur"""
     try:
-        # DÜZELTME: API çağrısı yapmadan önce kısa bekleme
-        import time
-        time.sleep(0.5)
-        
         # Başlık satırını al
         header_row = sheet.row_values(1)
         
@@ -342,14 +352,11 @@ def ensure_required_columns(sheet):
         if missing_columns:
             current_col = len(header_row) + 1
             for col in missing_columns:
-                try:
-                    sheet.update_cell(1, current_col, col)
-                    current_col += 1
-                    # API rate limit için bekleme
-                    time.sleep(1)
-                except Exception as update_error:
-                    st.error(f"Sütun ekleme hatası ({col}): {str(update_error)}")
-                    return False
+                sheet.update_cell(1, current_col, col)
+                current_col += 1
+                # Kısa bekleme
+                import time
+                time.sleep(0.1)
         
         return True
     except Exception as e:
