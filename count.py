@@ -5,8 +5,6 @@ from google.oauth2.service_account import Credentials
 import json
 import hashlib
 from datetime import datetime
-from google.auth.transport.requests import Request
-import google.auth
 import time
 
 # Sayfa konfigürasyonu
@@ -174,7 +172,6 @@ def verify_user(username, password):
     """Kullanıcıyı doğrular"""
     users = get_users()
     if username in users:
-        # Şifreyi hash'le ve karşılaştır
         password_hash = hashlib.sha256(password.encode()).hexdigest()
         return users[username] == password_hash
     return False
@@ -221,48 +218,37 @@ def logout():
     st.session_state.messages = []
     st.rerun()
 
-# Google Sheets bağlantısı için fonksiyonlar
-@st.cache_resource
+# Google Sheets bağlantısı için düzeltilmiş fonksiyonlar
 def init_google_sheets():
-    """Google Sheets bağlantısını başlatır"""
+    """Google Sheets bağlantısını başlatır - düzeltilmiş versiyon"""
     try:
-        # Service account credentials kontrol et
         if "gcp_service_account" not in st.secrets:
             st.error("❌ Google Service Account bilgileri bulunamadı!")
             return None
             
         creds_dict = st.secrets["gcp_service_account"]
-
-        # DÜZELTME: Scope'ları tanımla
+        
+        # Scope'ları tanımla
         scopes = [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
         ]
         
-        # DÜZELTME: Service account credentials'ı doğru şekilde oluştur
+        # Service account credentials'ı oluştur
         creds = Credentials.from_service_account_info(
             creds_dict, 
             scopes=scopes
         )
         
-        # DÜZELTME: Cache'i temizle ve yeni client oluştur
-        st.cache_resource.clear()
+        # gspread client'ı oluştur
+        client = gspread.authorize(creds)
         
-        # DÜZELTME: gspread client'ı oluştur - daha basit yöntem
-        try:
-            client = gspread.authorize(creds)
-            # Test bağlantısı
-            _ = client.list_spreadsheet_files()
-            return client
-        except Exception as inner_e:
-            st.error(f"gspread authorize hatası: {str(inner_e)}")
-            return None
+        return client
         
     except Exception as e:
         st.error(f"Google Sheets bağlantısı kurulamadı: {str(e)}")
         return None
 
-@st.cache_resource
 def get_spreadsheet():
     """Spreadsheet'i secrets'tan alır"""
     try:
@@ -270,27 +256,12 @@ def get_spreadsheet():
         if client is None:
             return None, None
         
-        # Spreadsheet ID'sini secrets'tan al
         if "spreadsheet" not in st.secrets:
             st.error("❌ Spreadsheet bilgileri bulunamadı!")
-            st.markdown("""
-            ### 🔧 Çözüm:
-            `secrets.toml` dosyanızda aşağıdaki yapıyı eklemelisiniz:
-            
-            ```toml
-            [spreadsheet]
-            id = "your_spreadsheet_id_here"
-            ```
-            
-            **Spreadsheet ID'sini nasıl bulursunuz:**
-            1. Google Sheets'te dosyanızı açın
-            2. URL'den ID'yi kopyalayın: `https://docs.google.com/spreadsheets/d/**SPREADSHEET_ID**/edit`
-            """)
             return None, None
             
         if "id" not in st.secrets["spreadsheet"]:
             st.error("❌ Spreadsheet ID bulunamadı!")
-            st.markdown("secrets.toml dosyasında `[spreadsheet]` altında `id` parametresi eksik!")
             return None, None
             
         spreadsheet_id = st.secrets["spreadsheet"]["id"]
@@ -301,7 +272,7 @@ def get_spreadsheet():
         st.error(f"Spreadsheet erişim hatası: {str(e)}")
         return None, None
 
-@st.cache_data(ttl=60)  # 1 dakika cache
+@st.cache_data(ttl=60)
 def load_data():
     """Google Sheets'ten veri yükler"""
     try:
@@ -309,12 +280,10 @@ def load_data():
         if spreadsheet is None:
             return None, None
         
-        # Ana sayfa (worksheet) al
         sheet = spreadsheet.sheet1
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         
-        # Boş satırları temizle
         if not df.empty:
             df = df.dropna(subset=['Depo Adresi', 'Taşıma Birimi (TB)'])
         
@@ -323,13 +292,24 @@ def load_data():
         st.error(f"Veri yükleme hatası: {str(e)}")
         return None, None
 
+def safe_update_cell(sheet, row, col, value, max_retries=3):
+    """Güvenli hücre güncelleme fonksiyonu"""
+    for attempt in range(max_retries):
+        try:
+            sheet.update_cell(row, col, value)
+            time.sleep(0.5)  # API rate limit için bekleme
+            return True
+        except Exception as e:
+            if attempt == max_retries - 1:
+                st.error(f"Hücre güncellenemedi (Satır: {row}, Sütun: {col}): {str(e)}")
+                return False
+            else:
+                time.sleep(1)  # Tekrar denemeden önce bekle
+    return False
+
 def ensure_required_columns(sheet):
-    """Gerekli sütunların var olduğundan emin olur"""
+    """Gerekli sütunların var olduğundan emin olur - düzeltilmiş versiyon"""
     try:
-        # DÜZELTME: API çağrısı yapmadan önce kısa bekleme
-        import time
-        time.sleep(0.5)
-        
         # Başlık satırını al
         header_row = sheet.row_values(1)
         
@@ -343,20 +323,17 @@ def ensure_required_columns(sheet):
         if missing_columns:
             current_col = len(header_row) + 1
             for col in missing_columns:
-                try:
-                    sheet.update_cell(1, current_col, col)
+                if safe_update_cell(sheet, 1, current_col, col):
                     current_col += 1
-                    # API rate limit için bekleme
-                    time.sleep(1)
-                except Exception as update_error:
-                    st.error(f"Sütun ekleme hatası ({col}): {str(update_error)}")
+                else:
                     return False
         
         return True
     except Exception as e:
         st.error(f"Sütun kontrol hatası: {str(e)}")
         return False
-    
+
+ 
 def update_sayim_durumu(sheet, tb_value, durum, username):
     """Sayım durumunu günceller"""
     try:
